@@ -7,6 +7,19 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.ConnectivityManager
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -120,7 +133,7 @@ private fun MainScreen(resumeTick: Int) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            PermissionCard(resumeTick)
+            PermissionCard(resumeTick, config)
 
             Section("飞书机器人") {
                 SwitchRow("转发到飞书", config.feishuEnabled) { config = config.copy(feishuEnabled = it) }
@@ -156,6 +169,8 @@ private fun MainScreen(resumeTick: Int) {
                 )
                 BarkEncryptionFields(config.barkEncryptKey) { config = config.copy(barkEncryptKey = it) }
             }
+
+            TemplateCard(config) { config = it }
 
             Button(onClick = {
                 keyProblem(config)?.let { toast(context, it); return@Button }
@@ -234,56 +249,248 @@ private fun BarkEncryptionFields(key: String, onChange: (String) -> Unit) {
     )
 }
 
+/** 一项检查：标题、是否通过、没通过时的说明和修复操作 */
+private class Check(val label: String, val ok: Boolean, val hint: String, val fix: () -> Unit)
+
 @SuppressLint("BatteryLife")
 @Composable
-private fun PermissionCard(resumeTick: Int) {
+private fun PermissionCard(resumeTick: Int, config: Config) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var tick by remember { mutableIntStateOf(0) }
+    var expanded by remember { mutableStateOf(false) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         tick++
         KeepAliveService.start(context)
     }
+    fun openAppSettings() = context.startActivity(
+        Intent(SystemSettings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.parse("package:${context.packageName}"))
+    )
 
-    // 回到界面或授权结束后重新检查
-    val smsOk = remember(resumeTick, tick) {
-        hasPermission(context, Manifest.permission.RECEIVE_SMS) && hasPermission(context, Manifest.permission.READ_SMS)
+    // 回到界面、授权结束或改了配置后重新检查
+    val checks = remember(resumeTick, tick, config) {
+        listOf(
+            Check(
+                "接收和读取短信",
+                hasPermission(context, Manifest.permission.RECEIVE_SMS) &&
+                    hasPermission(context, Manifest.permission.READ_SMS),
+                "没有这个权限就收不到短信。点授权没反应的话：设置 → 应用 → 短信转发 → 权限 → 短信，选“允许”",
+            ) { launcher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)) },
+            Check(
+                "通知使用权（锁屏时唤醒）",
+                NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName),
+                "在列表里找到“短信转发（锁屏唤醒）”并打开",
+            ) { context.startActivity(Intent(SystemSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+            Check(
+                "通知",
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    hasPermission(context, Manifest.permission.POST_NOTIFICATIONS),
+                "用来显示“正在后台监听短信”的常驻通知",
+            ) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    launcher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                }
+            },
+            Check(
+                "不限制后台耗电",
+                context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName),
+                "在弹窗里选“允许”，否则系统会在后台限制本 App",
+            ) {
+                context.startActivity(
+                    Intent(SystemSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        .setData(Uri.parse("package:${context.packageName}"))
+                )
+            },
+            Check(
+                "后台可以使用网络",
+                context.getSystemService(ConnectivityManager::class.java).restrictBackgroundStatus !=
+                    ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED,
+                "手机开了省流量模式，本 App 在后台不能联网。请在打开的页面里允许本 App 不受限制地使用数据",
+            ) {
+                try {
+                    context.startActivity(
+                        Intent(SystemSettings.ACTION_IGNORE_BACKGROUND_DATA_RESTRICTIONS_SETTINGS)
+                            .setData(Uri.parse("package:${context.packageName}"))
+                    )
+                } catch (e: Exception) {
+                    openAppSettings()
+                }
+            },
+            Check(
+                "后台服务正在运行",
+                KeepAliveService.running,
+                "点“去开启”重新启动；如果反复停止，请按下面“realme 后台设置”逐项设置",
+            ) {
+                KeepAliveService.start(context)
+                scope.launch { delay(500); tick++ }
+            },
+            Check(
+                "已设置转发渠道",
+                (config.feishuEnabled && config.feishuWebhook.isNotBlank()) ||
+                    (config.barkEnabled && config.barkUrl.isNotBlank()),
+                "在下面填好飞书或 Bark 的地址，并打开对应的开关",
+            ) { toast(context, "请在下面填好飞书或 Bark 的地址并打开开关") },
+        )
     }
-    val listenerOk = remember(resumeTick, tick) {
-        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
-    }
-    val notifyOk = remember(resumeTick, tick) {
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            hasPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-    }
-    val batteryOk = remember(resumeTick, tick) {
-        context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
-    }
+    val failed = checks.count { !it.ok }
 
-    Section("权限") {
-        StatusRow("接收和读取短信", smsOk) {
-            launcher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
-        }
-        StatusRow("通知使用权（锁屏时唤醒）", listenerOk) {
-            context.startActivity(Intent(SystemSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        }
-        StatusRow("通知", notifyOk) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                launcher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+    Section("权限检查") {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                if (failed == 0) "✅ 全部通过，可以正常转发" else "⚠️ 还有 $failed 项没设置好，短信可能转发不了",
+                color = if (failed == 0) Color(0xFF2E7D32) else Color(0xFFD32F2F),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            if (failed == 0) {
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "查看") }
             }
         }
-        StatusRow("不限制后台耗电", batteryOk) {
-            context.startActivity(
-                Intent(SystemSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                    .setData(Uri.parse("package:${context.packageName}"))
-            )
-        }
-        if (!smsOk || !listenerOk) {
+        // 有问题时始终展开；全部通过时默认收起
+        if (failed > 0 || expanded) {
+            checks.forEach { check ->
+                StatusRow(check.label, check.ok, check.fix)
+                if (!check.ok) {
+                    Text(
+                        check.hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 28.dp),
+                    )
+                }
+            }
             Text(
-                "如果点授权没反应：到 设置 → 应用 → 短信转发 → 权限 → 短信，选择“允许”。通知使用权在列表里找“短信转发（锁屏唤醒）”打开",
+                "“允许自启动”“锁屏后断网”这类 realme 设置没法自动检测，请对照下面的说明检查",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TemplateCard(config: Config, onChange: (Config) -> Unit) {
+    val context = LocalContext.current
+    val isCustom = config.templateId == Templates.CUSTOM
+
+    // 自定义模板的输入框要记住光标位置，点参数时插到光标处
+    var titleField by remember { mutableStateOf(TextFieldValue(config.customTitle)) }
+    var bodyField by remember { mutableStateOf(TextFieldValue(config.customBody)) }
+    var bodyFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(config.customTitle) {
+        if (titleField.text != config.customTitle) {
+            titleField = TextFieldValue(config.customTitle, TextRange(config.customTitle.length))
+        }
+    }
+    LaunchedEffect(config.customBody) {
+        if (bodyField.text != config.customBody) {
+            bodyField = TextFieldValue(config.customBody, TextRange(config.customBody.length))
+        }
+    }
+
+    Section("推送模板") {
+        Text("选择转发到 iPhone 时显示的样式", style = MaterialTheme.typography.bodySmall)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Templates.PRESETS.forEach { t ->
+                FilterChip(
+                    selected = config.templateId == t.id,
+                    onClick = { onChange(config.copy(templateId = t.id)) },
+                    label = { Text(t.name) },
+                )
+            }
+            FilterChip(
+                selected = isCustom,
+                onClick = { onChange(config.copy(templateId = Templates.CUSTOM)) },
+                label = { Text("自定义") },
+            )
+        }
+
+        if (!isCustom) {
+            TextButton(onClick = {
+                val t = Templates.current(config)
+                onChange(config.copy(templateId = Templates.CUSTOM, customTitle = t.title, customBody = t.body))
+                toast(context, "已复制到自定义，可以修改了")
+            }) { Text("以这个模板为基础自定义") }
+        } else {
+            OutlinedTextField(
+                value = titleField,
+                onValueChange = {
+                    titleField = it
+                    onChange(config.copy(customTitle = it.text))
+                },
+                label = { Text("标题") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { if (it.isFocused) bodyFocused = false },
+            )
+            OutlinedTextField(
+                value = bodyField,
+                onValueChange = {
+                    bodyField = it
+                    onChange(config.copy(customBody = it.text))
+                },
+                label = { Text("正文") },
+                minLines = 3,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { if (it.isFocused) bodyFocused = true },
+            )
+            Text("点下面的参数，插入到光标所在位置：", style = MaterialTheme.typography.bodySmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Templates.PARAMS.forEach { (name, _) ->
+                    AssistChip(
+                        onClick = {
+                            val tag = "{$name}"
+                            if (bodyFocused) {
+                                bodyField = bodyField.insert(tag)
+                                onChange(config.copy(customBody = bodyField.text))
+                            } else {
+                                titleField = titleField.insert(tag)
+                                onChange(config.copy(customTitle = titleField.text))
+                            }
+                        },
+                        label = { Text(name) },
+                    )
+                }
+            }
+            Text(
+                Templates.PARAMS.joinToString("\n") { (name, desc) -> "{$name}：$desc" } +
+                    "\n\n小技巧：用 [ ] 括起来的部分，里面的参数为空时整段不显示。" +
+                    "比如 [验证码 {验证码} · ]，没识别到验证码时这段就自动隐藏",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            val unknown = Templates.unknownParams(config.customTitle + config.customBody)
+            if (unknown.isNotEmpty()) {
+                Text(
+                    "⚠️ 不认识的参数：${unknown.joinToString("、") { "{$it}" }}，会原样显示",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFD32F2F),
+                )
+            }
+        }
+
+        // 用示例短信预览效果
+        val preview = Templates.render(context, config, Templates.SAMPLE)
+        Text("预览（示例短信）", style = MaterialTheme.typography.labelMedium)
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(preview.title, fontWeight = FontWeight.Bold)
+                Text(preview.body, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+/** 在光标处插入文字，有选中内容时替换选中部分 */
+private fun TextFieldValue.insert(tag: String): TextFieldValue {
+    val start = minOf(selection.start, selection.end)
+    val end = maxOf(selection.start, selection.end)
+    val newText = text.replaceRange(start, end, tag)
+    return TextFieldValue(newText, TextRange(start + tag.length))
 }
 
 @Composable
@@ -296,7 +503,8 @@ private fun RealmeGuideCard() {
             1. 设置 → 应用 → 应用管理 → 短信转发 → 耗电管理：打开“允许后台运行”“允许自启动”“允许关联启动”
             2. 打开最近任务（底部上滑停住），长按本 App 卡片 → 点“锁定”
             3. 设置 → 电池 → 关闭“省电模式”中对本 App 的限制（如有）
-            4. 保持通知栏里的“正在后台监听短信”常驻通知，不要关掉它
+            4. 关闭“锁屏后断网”：在设置顶部搜索“断网”或“锁屏”找到它并关掉。开着的话，锁屏期间的短信要等解锁后才能转发
+            5. 保持通知栏里的“正在后台监听短信”常驻通知，不要关掉它
             """.trimIndent(),
             style = MaterialTheme.typography.bodySmall,
         )

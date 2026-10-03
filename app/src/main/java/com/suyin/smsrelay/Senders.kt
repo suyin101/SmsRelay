@@ -8,9 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.security.SecureRandom
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
@@ -38,28 +35,15 @@ object Senders {
         return CODE_DIGITS.find(body)?.value
     }
 
-    private fun formatTime(time: Long): String =
-        SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA).format(Date(time))
-
-    private fun title(sms: Sms): String =
-        if (sms.sim.isEmpty()) sms.from else "${sms.from}（${sms.sim}）"
-
     // ---------- 飞书 ----------
 
-    fun sendFeishu(config: Config, sms: Sms) {
+    fun sendFeishu(config: Config, msg: Rendered) {
         if (!config.feishuWebhook.startsWith("https://")) {
             throw ConfigException("飞书 Webhook 地址不正确")
         }
-        val text = buildString {
-            findCode(sms.body)?.let { append("🔑 验证码：$it\n") }
-            append("📩 ${title(sms)}\n")
-            append("🕐 ${formatTime(sms.time)}\n")
-            append("————————\n")
-            append(sms.body)
-        }
         val json = JSONObject()
             .put("msg_type", "text")
-            .put("content", JSONObject().put("text", text))
+            .put("content", JSONObject().put("text", msg.text))
 
         if (config.feishuSecret.isNotEmpty()) {
             // 飞书签名：用 "时间戳\n密钥" 作为 HMAC 的 key，对空内容签名
@@ -80,7 +64,7 @@ object Senders {
 
     // ---------- Bark ----------
 
-    fun sendBark(config: Config, sms: Sms) {
+    fun sendBark(config: Config, sms: Sms, msg: Rendered) {
         // 用户从 Bark 里复制的地址形如 https://api.day.app/你的key/推送内容
         val uri = Uri.parse(config.barkUrl)
         val key = uri.pathSegments.firstOrNull()
@@ -92,8 +76,8 @@ object Senders {
 
         val code = findCode(sms.body)
         val payload = JSONObject()
-            .put("title", if (code != null) "验证码 $code · ${title(sms)}" else title(sms))
-            .put("body", sms.body)
+            .put("title", msg.title)
+            .put("body", msg.body)
             .put("group", "短信")
             .put("level", "timeSensitive")
         if (code != null) payload.put("copy", code)

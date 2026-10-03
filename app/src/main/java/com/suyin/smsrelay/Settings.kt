@@ -14,6 +14,10 @@ data class Config(
     val barkUrl: String = "",
     /** Bark 加密密钥，32 位；留空则不加密 */
     val barkEncryptKey: String = "",
+    /** 转发模板，见 Templates.PRESETS；选“自定义”时用下面两项 */
+    val templateId: String = Templates.PRESETS.first().id,
+    val customTitle: String = Templates.PRESETS.first().title,
+    val customBody: String = Templates.PRESETS.first().body,
 )
 
 /** 一条转发记录，显示在首页“最近记录”里 */
@@ -42,6 +46,9 @@ object Settings {
             barkEnabled = p.getBoolean("bark_enabled", false),
             barkUrl = p.getString("bark_url", "") ?: "",
             barkEncryptKey = p.getString("bark_encrypt_key", "") ?: "",
+            templateId = p.getString("template_id", null) ?: Templates.PRESETS.first().id,
+            customTitle = p.getString("custom_title", null) ?: Templates.PRESETS.first().title,
+            customBody = p.getString("custom_body", null) ?: Templates.PRESETS.first().body,
         )
     }
 
@@ -53,6 +60,9 @@ object Settings {
             .putBoolean("bark_enabled", config.barkEnabled)
             .putString("bark_url", config.barkUrl.trim())
             .putString("bark_encrypt_key", config.barkEncryptKey.trim())
+            .putString("template_id", config.templateId)
+            .putString("custom_title", config.customTitle)
+            .putString("custom_body", config.customBody)
             .apply()
     }
 

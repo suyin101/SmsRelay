@@ -16,7 +16,7 @@ import androidx.core.app.ServiceCompat
 
 /**
  * 常驻通知服务。本身不干活，作用是降低被系统后台清理杀掉的概率。
- * 注意：realme UI 7 仍会在锁屏后冻结本 App，冻结期间短信要到解锁后才送达。
+ * 注意：realme 的“锁屏后断网”要关掉，否则锁屏期间的短信要到解锁后才能发出。
  */
 class KeepAliveService : Service() {
 
@@ -30,11 +30,22 @@ class KeepAliveService : Service() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             } else 0
         )
+        running = true
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        running = false
+        super.onDestroy()
     }
 
     companion object {
         private const val CHANNEL_ID = "keep_alive"
+
+        /** 服务是否在运行，设置页用来显示检查结果 */
+        @Volatile
+        var running = false
+            private set
 
         fun start(context: Context) {
             try {

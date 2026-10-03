@@ -37,10 +37,11 @@ object Forwarder {
     /** 立即发送到一个渠道，并记录结果（网络错误除外，由调用方决定是否重试） */
     fun send(context: Context, channel: String, sms: Sms): Outcome {
         val config = Settings.load(context)
+        val msg = Templates.render(context, config, sms)
         return try {
             when (channel) {
-                CHANNEL_FEISHU -> Senders.sendFeishu(config, sms)
-                CHANNEL_BARK -> Senders.sendBark(config, sms)
+                CHANNEL_FEISHU -> Senders.sendFeishu(config, msg)
+                CHANNEL_BARK -> Senders.sendBark(config, sms, msg)
             }
             log(context, channel, sms, true, "已转发")
             Outcome.SENT

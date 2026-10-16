@@ -27,16 +27,20 @@
 
 ### 1. 安装
 
-本项目没有上架应用商店，需要自己编译安装：
+**直接下载安装包（推荐）**
 
-1. 安装 [Android Studio](https://developer.android.com/studio)
-2. 下载本项目代码，用 Android Studio 打开
-3. 安卓手机打开「开发者选项」里的「USB 调试」，用数据线连上电脑
-4. 点 Android Studio 上方的 ▶ 运行，App 就会装到手机上
-
-也可以用命令行编译：`./gradlew assembleDebug`，生成的安装包在 `app/build/outputs/apk/debug/app-debug.apk`，发到手机上安装即可。
+1. 在安卓手机上打开 [Releases 页面](https://github.com/suyin101/SmsRelay/releases/latest)，下载 `SmsRelay-v1.0.apk`
+2. 点开下载好的文件安装。手机提示「禁止安装未知来源应用」的话，按提示允许浏览器（或文件管理）安装应用
+3. 安装时如果手机提示「未经检测的应用」「可能有风险」，选「继续安装」。这是因为本 App 没有上架应用商店，不是病毒
 
 要求：Android 8.0 及以上。
+
+**自己编译**
+
+1. 安装 [Android Studio](https://developer.android.com/studio)，用它打开本项目
+2. 安卓手机打开「开发者选项」里的「USB 调试」，用数据线连上电脑，点 Android Studio 上方的 ▶ 运行
+
+也可以用命令行：`./gradlew assembleRelease`，安装包在 `app/build/outputs/apk/release/` 里。
 
 ### 2. 设置转发渠道
 
@@ -102,3 +106,7 @@
 - `KeepAliveService` 是常驻前台服务，降低被后台清理的概率
 - 发送失败交给 WorkManager，联网后自动重试
 - Bark 加密使用 AES-256-GCM，和 Bark 的「推送加密」设置对应
+
+## 开源协议
+
+[MIT](LICENSE)：可以随意使用、修改和分发，保留版权声明即可。本软件按原样提供，不提供任何担保。
